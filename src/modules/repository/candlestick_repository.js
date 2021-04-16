@@ -5,13 +5,26 @@ module.exports = class CandlestickRepository {
     this.db = db;
   }
 
-  getLookbacksForPair(exchange, symbol, period, limit = 750) {
+  getLookbacksForPair(exchange, symbol, period, limit = 750, olderThen = undefined) {
     return new Promise(resolve => {
+      const olderThenFilter = olderThen ? ' AND time <= :time ' : '';
+
       const stmt = this.db.prepare(
-        `SELECT * from candlesticks where exchange = ? AND symbol = ? and period = ? order by time DESC LIMIT ${limit}`
+        `SELECT * from candlesticks WHERE exchange = $exchange AND symbol = $symbol AND period = $period ${olderThenFilter} order by time DESC LIMIT $limit`
       );
 
-      const result = stmt.all([exchange, symbol, period]).map(row => {
+      const parameters = {
+        exchange: exchange,
+        symbol: symbol,
+        period: period,
+        limit: limit
+      };
+
+      if (olderThen) {
+        parameters.time = olderThen;
+      }
+
+      const result = stmt.all(parameters).map(row => {
         return new Candlestick(row.time, row.open, row.high, row.low, row.close, row.volume);
       });
 
@@ -52,9 +65,13 @@ module.exports = class CandlestickRepository {
   getExchangePairs() {
     return new Promise(resolve => {
       const stmt = this.db.prepare(
-        'select exchange, symbol from candlesticks group by exchange, symbol order by exchange, symbol'
+        'select exchange, symbol from candlesticks WHERE period != "1m" AND time > ? group by exchange, symbol order by exchange, symbol'
       );
-      resolve(stmt.all());
+
+      // only fetch candles newer the 5 days
+      const since = Math.round(new Date(new Date() - 1000 * 60 * 60 * 24 * 2).getTime() / 1000);
+
+      resolve(stmt.all([since]));
     });
   }
 

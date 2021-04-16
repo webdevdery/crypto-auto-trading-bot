@@ -10,41 +10,48 @@ module.exports = class PairsHttp {
 
   async getTradePairs() {
     const pairs = await Promise.all(
-      this.instances.symbols
-        .filter(symbol => !(_.get(symbol, 'trade.capital', 0) <= 0 && _.get(symbol, 'trade.currency_capital', 0) <= 0))
-        .map(async symbol => {
-          const position = await this.exchangeManager.getPosition(symbol.exchange, symbol.symbol);
-          const state = await this.pairStateManager.get(symbol.exchange, symbol.symbol);
+      this.instances.symbols.map(async symbol => {
+        const position = await this.exchangeManager.getPosition(symbol.exchange, symbol.symbol);
+        const state = await this.pairStateManager.get(symbol.exchange, symbol.symbol);
 
-          const item = {
-            exchange: symbol.exchange,
-            symbol: symbol.symbol,
-            watchdogs: symbol.watchdogs,
-            state: symbol.state,
-            has_position: position !== undefined,
-            capital: `${_.get(symbol, 'trade.capital', 0)} / ${_.get(symbol, 'trade.currency_capital', 0)}`,
-            strategies: symbol.trade.strategies || [],
-            weight: 0
-          };
+        const strategiesTrade = symbol.trade && symbol.trade.strategies ? symbol.trade.strategies : [];
+        const strategies = symbol.strategies || [];
 
-          // open position wins over default state
-          if (item.has_position) {
-            item.weight += 1;
-          }
+        const tradeCapital = _.get(symbol, 'trade.capital', 0);
+        const tradeCurrencyCapital = _.get(symbol, 'trade.currency_capital', 0);
 
-          // processing items must win
-          if (state && state.state) {
-            item.process = state.state;
-            item.weight += 2;
-          }
+        const item = {
+          exchange: symbol.exchange,
+          symbol: symbol.symbol,
+          watchdogs: symbol.watchdogs,
+          is_trading: strategiesTrade.length > 0 || tradeCapital > 0 || tradeCurrencyCapital > 0,
+          has_position: position !== undefined,
+          trade_capital: tradeCapital,
+          trade_currency_capital: tradeCurrencyCapital,
+          strategies: strategies,
+          strategies_trade: strategiesTrade,
+          weight: 0,
+          strategy_names: [...strategies, ...strategiesTrade].map(s => s.strategy)
+        };
 
-          return item;
-        })
+        // open position wins over default state
+        if (item.has_position) {
+          item.weight += 1;
+        }
+
+        // processing items must win
+        if (state && state.state) {
+          item.process = state.state;
+          item.weight += 2;
+        }
+
+        return item;
+      })
     );
 
-    return pairs.sort((a, b) => {
-      return b.weight - a.weight;
-    });
+    return pairs
+      .sort((a, b) => `${a.exchange}.${a.symbol}`.localeCompare(`${b.exchange}.${b.symbol}`))
+      .sort((a, b) => b.weight - a.weight);
   }
 
   async triggerOrder(exchangeName, symbol, action) {

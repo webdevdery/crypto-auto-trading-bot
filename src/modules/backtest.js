@@ -2,6 +2,7 @@ const moment = require('moment');
 const _ = require('lodash');
 const StrategyManager = require('./strategy/strategy_manager');
 const Resample = require('../utils/resample');
+const CommonUtil = require('../utils/common_util');
 
 module.exports = class Backtest {
   constructor(instances, strategyManager, exchangeCandleCombine, projectDir) {
@@ -26,7 +27,12 @@ module.exports = class Backtest {
       };
     });
 
-    return Promise.all(asyncs.map(fn => fn()));
+    const promise = await Promise.all(asyncs.map(fn => fn()));
+    return promise.sort((a, b) => {
+      const x = a.name;
+      const y = b.name;
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
   }
 
   getBacktestStrategies() {
@@ -49,7 +55,6 @@ module.exports = class Backtest {
 
       const rows = [];
       let current = start;
-      let lastSignal;
 
       // mock repository for window selection of candles
       const periodCache = {};
@@ -76,23 +81,64 @@ module.exports = class Backtest {
         }
       };
 
+      // store last triggered signal info
+      const lastSignal = {
+        price: undefined,
+        signal: undefined
+      };
+
+      // store missing profit because of early close
+      const lastSignalClosed = {
+        price: undefined,
+        signal: undefined
+      };
+
       const end = moment().unix();
       while (current < end) {
         const strategyManager = new StrategyManager({}, mockedRepository, {}, this.projectDir);
 
-        const item = await strategyManager.executeStrategyBacktest(strategy, exchange, pair, options, lastSignal);
+        const item = await strategyManager.executeStrategyBacktest(
+          strategy,
+          exchange,
+          pair,
+          options,
+          lastSignal.signal,
+          lastSignal.price
+        );
         item.time = current;
 
         // so change in signal
         let currentSignal = item.result ? item.result.getSignal() : undefined;
-        if (currentSignal === lastSignal) {
+        if (currentSignal === lastSignal.signal) {
           currentSignal = undefined;
         }
 
+        // position profit
+        if (lastSignal.price) {
+          item.profit = CommonUtil.getProfitAsPercent(lastSignal.signal, item.price, lastSignal.price);
+        }
+
         if (['long', 'short'].includes(currentSignal)) {
-          lastSignal = currentSignal;
+          lastSignal.signal = currentSignal;
+          lastSignal.price = item.price;
+
+          lastSignalClosed.signal = undefined;
+          lastSignalClosed.price = undefined;
         } else if (currentSignal === 'close') {
-          lastSignal = undefined;
+          lastSignalClosed.signal = lastSignal.signal;
+          lastSignalClosed.price = lastSignal.price;
+
+          lastSignal.signal = undefined;
+          lastSignal.price = undefined;
+        }
+
+        // calculate missing profits because of closed position until next event
+        if (!currentSignal && lastSignalClosed.price) {
+          if (lastSignalClosed.signal === 'long' && lastSignalClosed.price) {
+            item.lastPriceClosed = parseFloat(((item.price / lastSignalClosed.price - 1) * 100).toFixed(2));
+          } else if (lastSignalClosed.signal === 'short' && lastSignalClosed.price) {
+            item.lastPriceClosed = parseFloat(((lastSignalClosed.price / item.price - 1) * 100).toFixed(2));
+          }
         }
 
         rows.push(item);
@@ -147,6 +193,9 @@ module.exports = class Backtest {
         signals: signals.slice().reverse(),
         candles: JSON.stringify(candles),
         extra_fields: this.strategyManager.getBacktestColumns(strategy),
+        strategy: strategy,
+        start: new Date(start * 1000),
+        end: candles[0] ? candles[0].date : new Date(),
         configuration: {
           exchange: exchange,
           symbol: pair,
@@ -188,7 +237,7 @@ module.exports = class Backtest {
           // Entry Position Details
           const entrySignalType = lastPosition.result._signal; // Long or Short
           const entryPrice = lastPosition.price; // Price during the trade entry
-          const tradedQuantity = Number((workingCapital / entryPrice).toFixed(2)); // Quantity
+          const tradedQuantity = Number((workingCapital / entryPrice)); // Quantity
 
           // Exit Details
           const exitPrice = signalObject.price; // Price during trade exit

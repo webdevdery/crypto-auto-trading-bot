@@ -431,13 +431,17 @@ module.exports = class Binance {
       .filter(
         s =>
           s.trade &&
-          ((s.trade.capital && s.trade.capital > 0) || (s.trade.currency_capital && s.trade.currency_capital > 0))
+          ((s.trade.capital && s.trade.capital > 0) ||
+            (s.trade.currency_capital && s.trade.currency_capital > 0) ||
+            (s.trade.strategies && s.trade.strategies.length > 0))
       )
       .forEach(s => {
         if (s.trade.capital > 0) {
           capitals[s.symbol] = s.trade.capital;
         } else if (s.trade.currency_capital > 0 && this.tickers[s.symbol] && this.tickers[s.symbol].bid) {
           capitals[s.symbol] = s.trade.currency_capital / this.tickers[s.symbol].bid;
+        } else {
+          capitals[s.symbol] = 0;
         }
       });
 
@@ -448,7 +452,8 @@ module.exports = class Binance {
 
       for (const pair in capitals) {
         // just a hack to get matching pairs with capital eg: "BTCUSDT" needs a capital of "BTC"
-        if (!pair.startsWith(asset)) {
+        // workaround: eg "BTCUPDOWN" is breaking the match
+        if (!pair.startsWith(asset) || pair.startsWith(`${asset}UP`) || pair.startsWith(`${asset}DOWN`)) {
           continue;
         }
 
@@ -560,26 +565,12 @@ module.exports = class Binance {
       }
     }
 
-    // get balances and same them internally; allows to take open positions
-    // Format we get: balances: {'EOS': {"available": 12, "locked": 8}}
-    if (event.eventType && event.eventType === 'account' && 'balances' in event) {
-      const balances = [];
-
-      for (const asset in event.balances) {
-        const balance = event.balances[asset];
-
-        if (parseFloat(balance.available) + parseFloat(balance.locked) > 0) {
-          balances.push({
-            available: parseFloat(balance.available) + parseFloat(balance.locked),
-            locked: parseFloat(balance.locked),
-            asset: asset
-          });
-        }
-      }
-
-      this.balances = balances;
-
-      this.throttler.addTask('binance_sync_balances', this.syncBalances.bind(this), 5000);
+    // force balance update via api because:
+    // - "account": old api (once full update)
+    // - "outboundAccountPosition" given only delta
+    // - "balanceUpdate" given not balances
+    if (event.eventType && ['outboundAccountPosition', 'account', 'balanceUpdate'].includes(event.eventType)) {
+      this.throttler.addTask('binance_sync_balances', this.syncBalances.bind(this), 300);
     }
   }
 

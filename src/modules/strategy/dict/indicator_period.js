@@ -9,17 +9,31 @@ module.exports = class IndicatorPeriod {
   }
 
   getLastSignal() {
-    if (!this.strategyContext || !this.strategyContext.lastSignal) {
+    if (!this.strategyContext || !this.strategyContext.getLastSignal()) {
       return undefined;
     }
 
-    return this.strategyContext.lastSignal;
+    return this.strategyContext.getLastSignal();
   }
-  
-    
-  // Context return for the current strategy, usable to get the previous strategy signals and current positions.
-  // Usable in a strategy by calling indicatorPeriod.getStrategyContext() --> then you can use the result to grab the 
-  // current entry, last signal, etc..
+
+  getProfit() {
+    return this.strategyContext.getProfit();
+  }
+
+  isShort() {
+    return this.getLastSignal() === 'short';
+  }
+
+  isLong() {
+    return this.getLastSignal() === 'long';
+  }
+
+  /**
+   * Context return for the current strategy, usable to get the previous strategy signals and current positions.
+   *
+   * Usable in a strategy by calling indicatorPeriod.getStrategyContext() --> then you can use the result to grab the
+   * current entry, last signal, etc..
+   */
   getStrategyContext() {
     return this.strategyContext;
   }

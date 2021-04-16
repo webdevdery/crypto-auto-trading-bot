@@ -133,7 +133,7 @@ function executeTulindIndicator(source, indicator, tulindOptions) {
 
 module.exports = {
   // indicators which source is Candles
-  sourceCandle: ['cci', 'pivot_points_high_low', 'obv', 'ao', 'mfi', 'stoch', 'vwma', 'atr', 'adx', 'volume_profile', 'volume_by_price', 'ichimoku_cloud', 'zigzag', 'wicked'],
+  sourceCandle: ['cci', 'pivot_points_high_low', 'obv', 'ao', 'mfi', 'stoch', 'vwma', 'atr', 'adx', 'volume_profile', 'volume_by_price', 'ichimoku_cloud', 'zigzag', 'wicked', 'heikin_ashi', 'psar', 'hma'],
 
   bb: (source, indicator) => 
     executeTulindIndicator(source, indicator, {
@@ -147,10 +147,22 @@ module.exports = {
     executeTulindIndicator(...args, { sources: ['high', 'low', 'close', 'volume'], options: { length: 14 } }),
   sma: (...args) => executeTulindIndicator(...args, { options: { length: 14 } }),
   ema: (...args) => executeTulindIndicator(...args, { options: { length: 14 } }),
+  wma: (...args) => executeTulindIndicator(...args, { options: { length: 9 } }),
+  dema: (...args) => executeTulindIndicator(...args, { options: { length: 9 } }),
+  tema: (...args) => executeTulindIndicator(...args, { options: { length: 9 } }),
+  trima: (...args) => executeTulindIndicator(...args, { options: { length: 9 } }),
+  kama: (...args) => executeTulindIndicator(...args, { options: { length: 9 } }),
   rsi: (...args) => executeTulindIndicator(...args, { options: { length: 14 } }),
-  hma: (...args) => executeTulindIndicator(...args, { options: { length: 9 } }),
   roc: (...args) => executeTulindIndicator(...args, { options: { length: 6 } }),
   atr: (...args) => executeTulindIndicator(...args, { sources: ['high', 'low', 'close'], options: { length: 14 } }),
+
+  hma: (source, indicator) => {
+    let candleSource = (indicator.options && indicator.options.source) || 'close'
+
+    return executeTulindIndicator(source, indicator, {
+      sources: [candleSource],
+      options: { length: 9 }
+    })},
 
   cci: (...args) =>
     executeTulindIndicator(...args, {
@@ -290,6 +302,73 @@ module.exports = {
       }
 
       resolve({ [indicator.key]: result });
+    });
+  },
+
+  psar: function(source, indicator) {
+    return new Promise(resolve => {
+      const { options = {} } = indicator;
+      const { step = 0.02, max = 0.2 } = options;
+
+      const input = {
+        high: [],
+        low: [],
+        step: step,
+        max: max
+      };
+
+      source.forEach(candle => {
+        input.high.push(candle.high)
+        input.low.push(candle.low)
+      })
+
+      const { PSAR } = require('technicalindicators');
+      resolve({ [indicator.key]: new PSAR(input).getResult() });
+    });
+  },
+
+  heikin_ashi: function(source, indicator) {
+    return new Promise(resolve => {
+
+      const { HeikinAshi } = require('technicalindicators');
+
+      const input = {
+        close: [],
+        high: [],
+        low: [],
+        open: [],
+        timestamp: [],
+        volume: []
+      };
+
+      source.forEach(candle => {
+        input.close.push(candle.close)
+        input.high.push(candle.high)
+        input.low.push(candle.low)
+        input.open.push(candle.open)
+        input.timestamp.push(candle.time)
+        input.volume.push(candle.volume)
+      })
+
+      const f = new HeikinAshi(input);
+
+      const results = f.getResult();
+
+      const candles = [];
+
+      const length = (results.open || []).length;
+      for (let i = 0; i < length; i++) {
+        candles.push({
+          close: results.close[i],
+          high: results.high[i],
+          low: results.low[i],
+          open: results.open[i],
+          time: results.timestamp[i],
+          volume: results.volume[i]
+        });
+      }
+
+      resolve({ [indicator.key]: candles });
     });
   },
 

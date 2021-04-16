@@ -1,7 +1,8 @@
 const moment = require('moment');
 const _ = require('lodash');
-const { default: PQueue } = require('p-queue');
 const StrategyContext = require('../../dict/strategy_context');
+const Order = require('../../dict/order');
+const OrderCapital = require('../../dict/order_capital');
 
 module.exports = class TickListener {
   constructor(
@@ -13,7 +14,9 @@ module.exports = class TickListener {
     exchangeManager,
     pairStateManager,
     logger,
-    systemUtil
+    systemUtil,
+    orderExecutor,
+    orderCalculator
   ) {
     this.tickers = tickers;
     this.instances = instances;
@@ -24,6 +27,8 @@ module.exports = class TickListener {
     this.pairStateManager = pairStateManager;
     this.logger = logger;
     this.systemUtil = systemUtil;
+    this.orderExecutor = orderExecutor;
+    this.orderCalculator = orderCalculator;
 
     this.notified = {};
   }
@@ -38,10 +43,10 @@ module.exports = class TickListener {
 
     const strategyKey = strategy.strategy;
 
-    let context = StrategyContext.create(ticker);
+    let context = StrategyContext.create(strategy.options, ticker, true);
     const position = await this.exchangeManager.getPosition(symbol.exchange, symbol.symbol);
     if (position) {
-      context = StrategyContext.createFromPosition(ticker, position);
+      context = StrategyContext.createFromPosition(strategy.options, ticker, position, true);
     }
 
     const result = await this.strategyManager.executeStrategy(
@@ -102,10 +107,10 @@ module.exports = class TickListener {
 
     const strategyKey = strategy.strategy;
 
-    let context = StrategyContext.create(ticker);
+    let context = StrategyContext.create(strategy.options, ticker);
     const position = await this.exchangeManager.getPosition(symbol.exchange, symbol.symbol);
     if (position) {
-      context = StrategyContext.createFromPosition(ticker, position);
+      context = StrategyContext.createFromPosition(strategy.options, ticker, position);
     }
 
     const result = await this.strategyManager.executeStrategy(
@@ -115,8 +120,15 @@ module.exports = class TickListener {
       symbol.symbol,
       strategy.options || {}
     );
+
     if (!result) {
       return;
+    }
+
+    // handle orders inside strategy
+    const placedOrder = result.getPlaceOrder();
+    if (placedOrder.length > 0) {
+      await this.placeStrategyOrders(placedOrder, symbol);
     }
 
     const signal = result.getSignal();
@@ -158,10 +170,22 @@ module.exports = class TickListener {
     await this.pairStateManager.update(symbol.exchange, symbol.symbol, signal);
   }
 
+  async placeStrategyOrders(placedOrder, symbol) {
+    for (const order of placedOrder) {
+      const amount = await this.orderCalculator.calculateOrderSizeCapital(
+        symbol.exchange,
+        symbol.symbol,
+        OrderCapital.createCurrency(order.amount_currency)
+      );
+
+      const exchangeOrder = Order.createLimitPostOnlyOrder(symbol.symbol, Order.SIDE_LONG, order.price, amount);
+
+      await this.orderExecutor.executeOrderWithAmountAndPrice(symbol.exchange, exchangeOrder);
+    }
+  }
+
   async startStrategyIntervals() {
     this.logger.info(`Starting strategy intervals`);
-
-    const queue = new PQueue({ concurrency: this.systemUtil.getConfig('tick.pair_signal_concurrency', 10) });
 
     const me = this;
 
@@ -182,7 +206,15 @@ module.exports = class TickListener {
       me.logger.info(`Strategy: "${type.name}" found "${type.items.length}" valid symbols`);
 
       type.items.forEach(symbol => {
-        symbol.strategies.forEach(strategy => {
+        // map strategies
+        let strategies = [];
+        if (type.name === 'watch') {
+          strategies = symbol.strategies;
+        } else if (type.name === 'trade') {
+          strategies = symbol.trade.strategies;
+        }
+
+        strategies.forEach(strategy => {
           let myInterval = '1m';
 
           if (strategy.interval) {
@@ -200,12 +232,27 @@ module.exports = class TickListener {
           const timeoutWindow = timeout + (Math.floor(Math.random() * 9000) + 5000);
 
           me.logger.info(
-            `"${symbol.exchange}" - "${symbol.symbol}" - "${type.name}" init strategy "${strategy.strategy}" in ${(
-              timeoutWindow /
-              60 /
-              1000
-            ).toFixed(3)} minutes`
+            `"${symbol.exchange}" - "${symbol.symbol}" - "${type.name}" - init strategy "${
+              strategy.strategy
+            }" (${myInterval}) in ${(timeoutWindow / 60 / 1000).toFixed(3)} minutes`
           );
+
+          const strategyIntervalCallback = async () => {
+            /*
+            // logging can be high traffic on alot of pairs
+            me.logger.debug(
+              `"${symbol.exchange}" - "${symbol.symbol}" - "${type.name}" strategy running "${strategy.strategy}"`
+            );
+            */
+
+            if (type.name === 'watch') {
+              await me.visitStrategy(strategy, symbol);
+            } else if (type.name === 'trade') {
+              await me.visitTradeStrategy(strategy, symbol);
+            } else {
+              throw new Error(`Invalid strategy type${type.name}`);
+            }
+          };
 
           setTimeout(() => {
             me.logger.info(
@@ -214,23 +261,14 @@ module.exports = class TickListener {
               }" now every ${(interval / 60 / 1000).toFixed(2)} minutes`
             );
 
-            setInterval(() => {
-              queue.add(async () => {
-                /*
-                // logging can be high traffic on alot of pairs
-                me.logger.debug(
-                  `"${symbol.exchange}" - "${symbol.symbol}" - "${type.name}" strategy running "${strategy.strategy}"`
-                );
-                */
+            // first run call
+            setTimeout(async () => {
+              await strategyIntervalCallback();
+            }, 1000 + Math.floor(Math.random() * (800 - 300 + 1)) + 100);
 
-                if (type.name === 'watch') {
-                  await me.visitStrategy(strategy, symbol);
-                } else if (type.name === 'trade') {
-                  await me.visitTradeStrategy(strategy, symbol);
-                } else {
-                  throw new Error(`Invalid strategy type${type.name}`);
-                }
-              });
+            // continuous run
+            setInterval(async () => {
+              await strategyIntervalCallback();
             }, interval);
           }, timeoutWindow);
         });

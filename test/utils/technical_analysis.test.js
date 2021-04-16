@@ -105,6 +105,10 @@ describe('#technical_analysis for candles', () => {
         key: 'candles'
       },
       {
+        indicator: 'heikin_ashi',
+        key: 'heikin_ashi'
+      },
+      {
         indicator: 'stoch',
         key: 'stoch'
       },
@@ -114,7 +118,31 @@ describe('#technical_analysis for candles', () => {
       },
       {
         indicator: 'hma',
-        key: 'hma'
+        key: 'hma',
+        options: {
+          length: 9,
+          source: 'low'
+        }
+      },
+      {
+        indicator: 'wma',
+        key: 'wma'
+      },
+      {
+        indicator: 'dema',
+        key: 'dema'
+      },
+      {
+        indicator: 'tema',
+        key: 'tema'
+      },
+      {
+        indicator: 'trima',
+        key: 'trima'
+      },
+      {
+        indicator: 'kama',
+        key: 'kama'
       },
       {
         indicator: 'vwma',
@@ -147,11 +175,25 @@ describe('#technical_analysis for candles', () => {
       {
         indicator: 'ichimoku_cloud',
         key: 'ichimoku_cloud'
+      },
+      {
+        indicator: 'psar',
+        key: 'psar',
+        options: {
+          step: 0.01,
+          max: 0.011
+        }
       }
     ]);
 
     assert.equal(result.ema_55.length, 490);
     assert.equal(result.sma_200.length, 291);
+
+    assert.equal(result.wma.length > 0, true);
+    assert.equal(result.dema.length > 0, true);
+    assert.equal(result.tema.length > 0, true);
+    assert.equal(result.trima.length > 0, true);
+    assert.equal(result.kama.length > 0, true);
 
     assert.equal(result.rsi.length > 0, true);
     assert.equal(result.mfi.length > 0, true);
@@ -208,6 +250,11 @@ describe('#technical_analysis for candles', () => {
     assert.equal(result.candles[0].time < lookbacks[1].time, true);
     assert.equal(result.candles[result.candles.length - 1].time, lookbacks[result.candles.length - 1].time);
 
+    assert.equal(result.heikin_ashi.length, lookbacks.length);
+    assert.equal(result.heikin_ashi[0].time, lookbacks[0].time);
+    assert.equal(result.heikin_ashi[0].time < lookbacks[1].time, true);
+    assert.equal(result.heikin_ashi[result.heikin_ashi.length - 1].time, lookbacks[result.heikin_ashi.length - 1].time);
+
     assert.equal(result.hma.length > 0, true);
     assert.equal(result.hma[0] > 0, true);
 
@@ -218,6 +265,8 @@ describe('#technical_analysis for candles', () => {
     assert.equal(result.roc[0] < 0, true);
 
     assert.equal(result.adx[0] > 0, true);
+
+    assert.equal(result.psar[0], 8144.5);
 
     const volumeByPrice = result.volume_by_price[0][0];
 
